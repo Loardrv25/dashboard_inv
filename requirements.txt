@@ -3,20 +3,6 @@ pandas
 numpy
 matplotlib
 plotly
-<<<<<<< HEAD
 yfinance
 
-=======
-ccxt
-yfinance
->>>>>>> 1098905dd99a1e47149ad15200db254e3dda5149
-
-# QUITA esto 👇
-<<<<<<< HEAD
-import yfinance as yf
-=======
-import ccxt
->>>>>>> main
-# DEJA solo esto 👇
-import yfinance as yf
 
