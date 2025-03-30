@@ -59,17 +59,10 @@ if df is not None and not df.empty:
 
     # RSI
     delta = df['Close'].diff()
-<<<<<<< HEAD
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
     avg_gain = gain.rolling(window=14).mean()
     avg_loss = loss.rolling(window=14).mean()
-=======
-    gain = np.where(delta > 0, delta, 0)
-    loss = np.where(delta < 0, -delta, 0)
-    avg_gain = pd.Series(gain).rolling(window=14).mean()
-    avg_loss = pd.Series(loss).rolling(window=14).mean()
->>>>>>> 1098905dd99a1e47149ad15200db254e3dda5149
     rs = avg_gain / avg_loss
     df['RSI'] = 100 - (100 / (1 + rs))
 
@@ -138,12 +131,3 @@ if df is not None and not df.empty:
             boll_signal = "VENTA"
             boll_color = "red"
     st.markdown(f'<div style="background-color:{boll_color};color:white;padding:10px;border-radius:5px;text-align:center;">{boll_signal}</div>', unsafe_allow_html=True)
-
-# QUITA esto 👇
-<<<<<<< HEAD
-import yfinance as yf
-=======
-import ccxt
->>>>>>> main
-# DEJA solo esto 👇
-import yfinance as yf
