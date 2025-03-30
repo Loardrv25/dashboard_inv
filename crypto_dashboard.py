@@ -1,21 +1,22 @@
+
 import streamlit as st
 import pandas as pd
 import numpy as np
-import ccxt
 import yfinance as yf
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
+st.set_page_config(layout="wide")
 st.title("Dashboard de Análisis Técnico - Criptomonedas e Índices de Mercado")
 
 # --- Configuración de activos ---
 cryptos = {
-    'BTC/USDT': 'Bitcoin',
-    'ETH/USDT': 'Ethereum',
-    'SOL/USDT': 'Solana',
-    'XRP/USDT': 'Ripple',
-    'ADA/USDT': 'Cardano'
+    'BTC-USD': 'Bitcoin',
+    'ETH-USD': 'Ethereum',
+    'SOL-USD': 'Solana',
+    'XRP-USD': 'Ripple',
+    'ADA-USD': 'Cardano'
 }
 
 indices = {
@@ -28,77 +29,38 @@ indices = {
 market_type = st.sidebar.radio("Selecciona tipo de mercado:", ["Criptomonedas", "Índices de Mercado"])
 
 if market_type == "Criptomonedas":
-    selected_asset = st.sidebar.selectbox("Selecciona una criptomoneda:", list(cryptos.keys()), format_func=lambda x: cryptos[x])
+    selected_symbol = st.sidebar.selectbox("Selecciona una criptomoneda:", list(cryptos.keys()), format_func=lambda x: cryptos[x])
 else:
-    selected_asset = st.sidebar.selectbox("Selecciona un índice de mercado:", list(indices.keys()))
+    selected_symbol = st.sidebar.selectbox("Selecciona un índice de mercado:", list(indices.keys()), format_func=lambda x: x)
 
-# --- Fecha de inicio: últimos 3 años ---
+# Fecha de inicio: últimos 3 años
 start_date = datetime.now() - timedelta(days=3*365)
 start_str = start_date.strftime('%Y-%m-%d')
 
-# --- Funciones para obtener datos ---
+# Cargar datos de Yahoo Finance
 @st.cache_data
-def fetch_crypto_data(symbol, timeframe="1d"):
-    try:
-        exchange = ccxt.binance()
-        since = exchange.parse8601(f"{start_str}T00:00:00Z")
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since)
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        return df
-    except Exception as e:
-        st.error(f"Error al descargar datos de {symbol}: {e}")
-        return None
+def load_data_yf(symbol):
+    df = yf.download(symbol, start=start_str)
+    df.reset_index(inplace=True)
+    return df
 
-@st.cache_data
-def fetch_index_data(index_symbol):
-    try:
-        df = yf.download(index_symbol, start=start_str, interval="1d", auto_adjust=False)
-        df.reset_index(inplace=True)
-        return df
-    except Exception as e:
-        st.error(f"Error al descargar datos de {index_symbol}: {e}")
-        return None
-
-# --- Obtener datos según tipo ---
-if market_type == "Criptomonedas":
-    df = fetch_crypto_data(selected_asset)
-    x_column = 'timestamp'
-else:
-    df = fetch_index_data(indices[selected_asset])
-    x_column = 'Date'
-
-# --- Columnas dinámicas para precios ---
-if market_type == "Criptomonedas":
-    price_col = 'close'
-    open_col = 'open'
-    high_col = 'high'
-    low_col = 'low'
-else:
-    price_col = 'Close'
-    open_col = 'Open'
-    high_col = 'High'
-    low_col = 'Low'
+df = load_data_yf(selected_symbol)
 
 if df is not None and not df.empty:
-    with st.expander("Ver datos históricos"):
-        st.dataframe(df.tail(10))
-
-    # --- Gráfico del curso ---
-    st.subheader(f"Evolución de {selected_asset}")
+    st.subheader(f"Evolución de {selected_symbol}")
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df[x_column], y=df[price_col], mode='lines', name='Precio', line=dict(color='blue')))
-    fig.update_layout(title=f"Curso de {selected_asset}", xaxis_title="Fecha", yaxis_title="Precio")
-    st.plotly_chart(fig)
+    fig.add_trace(go.Scatter(x=df['Date'], y=df['Close'], mode='lines', name='Precio', line=dict(color='blue')))
+    fig.update_layout(title=f"Curso de {selected_symbol}", xaxis_title="Fecha", yaxis_title="Precio")
+    st.plotly_chart(fig, use_container_width=True)
 
-    # --- Parámetro SMA ---
+    # Parámetro SMA
     sma_period = st.sidebar.slider("Periodo SMA", 5, 100, 20)
-    df['SMA'] = df[price_col].rolling(window=sma_period).mean()
+    df['SMA'] = df['Close'].rolling(window=sma_period).mean()
 
-    # --- RSI ---
-    delta = df[price_col].diff()
-    gain = np.where(delta > 0, delta, 0).flatten()
-    loss = np.where(delta < 0, -delta, 0).flatten()
+    # RSI
+    delta = df['Close'].diff()
+    gain = np.where(delta > 0, delta, 0)
+    loss = np.where(delta < 0, -delta, 0)
     avg_gain = pd.Series(gain).rolling(window=14).mean()
     avg_loss = pd.Series(loss).rolling(window=14).mean()
     rs = avg_gain / avg_loss
@@ -106,77 +68,66 @@ if df is not None and not df.empty:
 
     st.subheader("RSI")
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(df[x_column], df['RSI'], label='RSI', color='purple')
+    ax.plot(df['Date'], df['RSI'], label='RSI', color='purple')
     ax.axhline(70, linestyle='--', color='red', label='Sobrecompra (70)')
     ax.axhline(30, linestyle='--', color='green', label='Sobreventa (30)')
     ax.legend()
     st.pyplot(fig)
 
-    # --- Recomendación RSI ---
     rsi_signal = "Mantener"
-    color = "gray"
+    rsi_color = "gray"
     if not pd.isna(df['RSI'].iloc[-1]):
         if df['RSI'].iloc[-1] < 30:
             rsi_signal = "COMPRA"
-            color = "green"
+            rsi_color = "green"
         elif df['RSI'].iloc[-1] > 70:
             rsi_signal = "VENTA"
-            color = "red"
-    st.markdown(f'<div style="background-color:{color};color:white;padding:10px;border-radius:5px;text-align:center;">{rsi_signal}</div>', unsafe_allow_html=True)
+            rsi_color = "red"
+    st.markdown(f'<div style="background-color:{rsi_color};color:white;padding:10px;border-radius:5px;text-align:center;">{rsi_signal}</div>', unsafe_allow_html=True)
 
-    # --- MACD ---
-    short_ema = df[price_col].ewm(span=12, adjust=False).mean()
-    long_ema = df[price_col].ewm(span=26, adjust=False).mean()
+    # MACD
+    short_ema = df['Close'].ewm(span=12, adjust=False).mean()
+    long_ema = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = short_ema - long_ema
     df['Signal Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
 
     st.subheader("MACD")
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(df[x_column], df['MACD'], label='MACD', color='blue')
-    ax.plot(df[x_column], df['Signal Line'], label='Línea de Señal', color='red')
+    ax.plot(df['Date'], df['MACD'], label='MACD', color='blue')
+    ax.plot(df['Date'], df['Signal Line'], label='Línea de Señal', color='red')
     ax.legend()
     st.pyplot(fig)
 
-    # --- Recomendación MACD ---
     macd_signal = "Mantener"
-    color = "gray"
+    macd_color = "gray"
     if not pd.isna(df['MACD'].iloc[-1]) and not pd.isna(df['Signal Line'].iloc[-1]):
         if df['MACD'].iloc[-1] > df['Signal Line'].iloc[-1]:
             macd_signal = "COMPRA"
-            color = "green"
+            macd_color = "green"
         elif df['MACD'].iloc[-1] < df['Signal Line'].iloc[-1]:
             macd_signal = "VENTA"
-            color = "red"
-    st.markdown(f'<div style="background-color:{color};color:white;padding:10px;border-radius:5px;text-align:center;">{macd_signal}</div>', unsafe_allow_html=True)
+            macd_color = "red"
+    st.markdown(f'<div style="background-color:{macd_color};color:white;padding:10px;border-radius:5px;text-align:center;">{macd_signal}</div>', unsafe_allow_html=True)
 
-    # --- Bandas de Bollinger ---
+    # Bandas de Bollinger
     st.subheader("Bandas de Bollinger")
-
-    if market_type == "Criptomonedas":
-        std_dev = df[price_col].rolling(window=sma_period).std()
-        df['Upper Band'] = df['SMA'] + (2 * std_dev)
-        df['Lower Band'] = df['SMA'] - (2 * std_dev)
-    else:
-        std_series_df = df[['Close']].rolling(window=sma_period).std()
-        std_series = std_series_df['Close']  # Extraemos Serie limpia y 1D
-
-        df['Upper Band'] = df['SMA'] + (2 * std_series)
-        df['Lower Band'] = df['SMA'] - (2 * std_series)
+    std_dev = df['Close'].rolling(window=sma_period).std()
+    df['Upper Band'] = df['SMA'] + (2 * std_dev)
+    df['Lower Band'] = df['SMA'] - (2 * std_dev)
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df[x_column], y=df['Upper Band'], name="Upper Band", line=dict(color='blue', dash='dot')))
-    fig.add_trace(go.Scatter(x=df[x_column], y=df['Lower Band'], name="Lower Band", line=dict(color='blue', dash='dot')))
-    fig.add_trace(go.Candlestick(x=df[x_column], open=df[open_col], high=df[high_col], low=df[low_col], close=df[price_col], name="Candlestick"))
-    st.plotly_chart(fig)
+    fig.add_trace(go.Scatter(x=df['Date'], y=df['Upper Band'], name="Upper Band", line=dict(color='blue', dash='dot')))
+    fig.add_trace(go.Scatter(x=df['Date'], y=df['Lower Band'], name="Lower Band", line=dict(color='blue', dash='dot')))
+    fig.add_trace(go.Candlestick(x=df['Date'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="Candlestick"))
+    st.plotly_chart(fig, use_container_width=True)
 
-    # --- Recomendación Bollinger ---
     boll_signal = "Mantener"
-    color = "gray"
-    if not pd.isna(df[price_col].iloc[-1]) and not pd.isna(df['Lower Band'].iloc[-1]) and not pd.isna(df['Upper Band'].iloc[-1]):
-        if df[price_col].iloc[-1] <= df['Lower Band'].iloc[-1]:
+    boll_color = "gray"
+    if not pd.isna(df['Close'].iloc[-1]) and not pd.isna(df['Lower Band'].iloc[-1]) and not pd.isna(df['Upper Band'].iloc[-1]):
+        if df['Close'].iloc[-1] <= df['Lower Band'].iloc[-1]:
             boll_signal = "COMPRA"
-            color = "green"
-        elif df[price_col].iloc[-1] >= df['Upper Band'].iloc[-1]:
+            boll_color = "green"
+        elif df['Close'].iloc[-1] >= df['Upper Band'].iloc[-1]:
             boll_signal = "VENTA"
-            color = "red"
-    st.markdown(f'<div style="background-color:{color};color:white;padding:10px;border-radius:5px;text-align:center;">{boll_signal}</div>', unsafe_allow_html=True)
+            boll_color = "red"
+    st.markdown(f'<div style="background-color:{boll_color};color:white;padding:10px;border-radius:5px;text-align:center;">{boll_signal}</div>', unsafe_allow_html=True)
