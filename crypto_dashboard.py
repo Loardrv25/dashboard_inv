@@ -6,6 +6,7 @@ import yfinance as yf
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
+from bollinger_helper import corregir_bollinger  # importamos el helper nuevo
 
 st.set_page_config(layout="wide")
 st.title("Dashboard de Análisis Técnico - Criptomonedas e Índices de Mercado")
@@ -111,9 +112,7 @@ if df is not None and not df.empty:
 
     # Bandas de Bollinger
     st.subheader("Bandas de Bollinger")
-    std_dev = df['Close'].rolling(window=sma_period).std()
-    df['Upper Band'] = df['SMA'] + (2 * std_dev)
-    df['Lower Band'] = df['SMA'] - (2 * std_dev)
+    df = corregir_bollinger(df, sma_column='SMA', price_column='Close', sma_period=sma_period)
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df['Date'], y=df['Upper Band'], name="Upper Band", line=dict(color='blue', dash='dot')))
