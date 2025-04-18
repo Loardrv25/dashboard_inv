@@ -1,30 +1,36 @@
 
+from dotenv import load_dotenv
+load_dotenv()
 import streamlit as st
 import pandas as pd
 import numpy as np
-import yfinance as yf
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
-from bollinger_helper import corregir_bollinger  # importamos el helper nuevo
+import requests
+import os
+
+# CONFIGURA TU API KEY AQUÍ (o usa variable de entorno)
+API_KEY = API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
 
 st.set_page_config(layout="wide")
-st.title("Dashboard de Análisis Técnico - Criptomonedas e Índices de Mercado")
+st.title("Dashboard de Análisis Técnico - Alpha Vantage")
 
-# --- Configuración de activos ---
+# Configuración de activos
 cryptos = {
-    'BTC-USD': 'Bitcoin',
-    'ETH-USD': 'Ethereum',
-    'SOL-USD': 'Solana',
-    'XRP-USD': 'Ripple',
-    'ADA-USD': 'Cardano'
+    'BTC/USD': 'Bitcoin',
+    'ETH/USD': 'Ethereum',
+    'SOL/USD': 'Solana',
+    'XRP/USD': 'Ripple',
+    'ADA/USD': 'Cardano'
 }
 
 indices = {
-    "Dow Jones": "^DJI",
-    "Nasdaq": "^IXIC",
-    "S&P 500": "^GSPC",
-    "DAX": "^GDAXI"
+    "S&P 500 (SPY ETF)": "SPY",
+    "Nasdaq 100 (QQQ ETF)": "QQQ",
+    "Dow Jones (DIA ETF)": "DIA",
+    "Russell 2000 (IWM ETF)": "IWM",
+    "DAX Alemania (EWG ETF)": "EWG"
 }
 
 market_type = st.sidebar.radio("Selecciona tipo de mercado:", ["Criptomonedas", "Índices de Mercado"])
@@ -34,18 +40,82 @@ if market_type == "Criptomonedas":
 else:
     selected_symbol = st.sidebar.selectbox("Selecciona un índice de mercado:", list(indices.keys()), format_func=lambda x: x)
 
-# Fecha de inicio: últimos 3 años
+# Fecha de inicio
 start_date = datetime.now() - timedelta(days=3*365)
-start_str = start_date.strftime('%Y-%m-%d')
 
-# Cargar datos de Yahoo Finance
 @st.cache_data
-def load_data_yf(symbol):
-    df = yf.download(symbol, start=start_str)
-    df.reset_index(inplace=True)
-    return df
+def fetch_alpha_vantage(symbol, is_crypto=True):
+    if is_crypto:
+        market = "USD"
+        url = f"https://www.alphavantage.co/query?function=DIGITAL_CURRENCY_DAILY&symbol={symbol.split('/')[0]}&market={market}&apikey={API_KEY}"
+    else:
+        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol={symbol}&outputsize=full&apikey={API_KEY}"
+    
+    response = requests.get(url)
+    data = response.json()
 
-df = load_data_yf(selected_symbol)
+    if is_crypto:
+        ts_key = "Time Series (Digital Currency Daily)"
+        price_key = "4a. close (USD)"
+    else:
+        ts_key = "Time Series (Daily)"
+        price_key = "4. close"
+
+    if ts_key not in data:
+        return pd.DataFrame()
+    if price_key not in next(iter(data[ts_key].values())).keys():
+        st.error(f"No se encontró la columna '{price_key}' en los datos recibidos de Alpha Vantage.")
+        return pd.DataFrame()
+
+    def fetch_alpha_vantage(symbol, is_crypto=False):
+        api_key = os.getenv("ALPHAVANTAGE_API_KEY")
+        if not api_key:
+            st.error("API key de Alpha Vantage no encontrada.")
+            return pd.DataFrame()
+
+        if is_crypto:
+            base_url = "https://www.alphavantage.co/query"
+            params = {
+                "function": "DIGITAL_CURRENCY_DAILY",
+                "symbol": symbol,
+                "market": "USD",
+                "apikey": api_key
+            }
+            price_key = "4a. close (USD)"
+            ts_key = "Time Series (Digital Currency Daily)"
+        else:
+            base_url = "https://www.alphavantage.co/query"
+            params = {
+                "function": "TIME_SERIES_DAILY",
+                "symbol": symbol,
+                "apikey": api_key
+            }
+            price_key = "4. close"
+            ts_key = "Time Series (Daily)"
+
+        response = requests.get(base_url, params=params)
+        data = response.json()
+
+        if ts_key not in data:
+            return pd.DataFrame()
+
+        first_row = next(iter(data[ts_key].values()))
+        if price_key not in first_row:
+            st.error(f"No se encontró la columna '{price_key}' en los datos recibidos de Alpha Vantage.")
+            return pd.DataFrame()
+
+        df = pd.DataFrame.from_dict(data[ts_key], orient='index')
+        df.index = pd.to_datetime(df.index)
+        df.sort_index(inplace=True)
+        df["Close"] = df[price_key].astype(float)
+        df = df[["Close"]]  # Solo dejamos la columna Close
+        df.reset_index(inplace=True)
+        df.rename(columns={"index": "Date"}, inplace=True)
+
+        return df
+
+
+df = fetch_alpha_vantage(selected_symbol, is_crypto=(market_type == "Criptomonedas"))
 
 if df is not None and not df.empty:
     st.subheader(f"Evolución de {selected_symbol}")
@@ -54,7 +124,7 @@ if df is not None and not df.empty:
     fig.update_layout(title=f"Curso de {selected_symbol}", xaxis_title="Fecha", yaxis_title="Precio")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Parámetro SMA
+    # SMA
     sma_period = st.sidebar.slider("Periodo SMA", 5, 100, 20)
     df['SMA'] = df['Close'].rolling(window=sma_period).mean()
 
@@ -70,21 +140,10 @@ if df is not None and not df.empty:
     st.subheader("RSI")
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.plot(df['Date'], df['RSI'], label='RSI', color='purple')
-    ax.axhline(70, linestyle='--', color='red', label='Sobrecompra (70)')
-    ax.axhline(30, linestyle='--', color='green', label='Sobreventa (30)')
+    ax.axhline(70, linestyle='--', color='red')
+    ax.axhline(30, linestyle='--', color='green')
     ax.legend()
     st.pyplot(fig)
-
-    rsi_signal = "Mantener"
-    rsi_color = "gray"
-    if not pd.isna(df['RSI'].iloc[-1]):
-        if df['RSI'].iloc[-1] < 30:
-            rsi_signal = "COMPRA"
-            rsi_color = "green"
-        elif df['RSI'].iloc[-1] > 70:
-            rsi_signal = "VENTA"
-            rsi_color = "red"
-    st.markdown(f'<div style="background-color:{rsi_color};color:white;padding:10px;border-radius:5px;text-align:center;">{rsi_signal}</div>', unsafe_allow_html=True)
 
     # MACD
     short_ema = df['Close'].ewm(span=12, adjust=False).mean()
@@ -98,35 +157,5 @@ if df is not None and not df.empty:
     ax.plot(df['Date'], df['Signal Line'], label='Línea de Señal', color='red')
     ax.legend()
     st.pyplot(fig)
-
-    macd_signal = "Mantener"
-    macd_color = "gray"
-    if not pd.isna(df['MACD'].iloc[-1]) and not pd.isna(df['Signal Line'].iloc[-1]):
-        if df['MACD'].iloc[-1] > df['Signal Line'].iloc[-1]:
-            macd_signal = "COMPRA"
-            macd_color = "green"
-        elif df['MACD'].iloc[-1] < df['Signal Line'].iloc[-1]:
-            macd_signal = "VENTA"
-            macd_color = "red"
-    st.markdown(f'<div style="background-color:{macd_color};color:white;padding:10px;border-radius:5px;text-align:center;">{macd_signal}</div>', unsafe_allow_html=True)
-
-    # Bandas de Bollinger
-    st.subheader("Bandas de Bollinger")
-    df = corregir_bollinger(df, sma_column='SMA', price_column='Close', sma_period=sma_period)
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df['Date'], y=df['Upper Band'], name="Upper Band", line=dict(color='blue', dash='dot')))
-    fig.add_trace(go.Scatter(x=df['Date'], y=df['Lower Band'], name="Lower Band", line=dict(color='blue', dash='dot')))
-    fig.add_trace(go.Candlestick(x=df['Date'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="Candlestick"))
-    st.plotly_chart(fig, use_container_width=True)
-
-    boll_signal = "Mantener"
-    boll_color = "gray"
-    if not pd.isna(df['Close'].iloc[-1]) and not pd.isna(df['Lower Band'].iloc[-1]) and not pd.isna(df['Upper Band'].iloc[-1]):
-        if df['Close'].iloc[-1] <= df['Lower Band'].iloc[-1]:
-            boll_signal = "COMPRA"
-            boll_color = "green"
-        elif df['Close'].iloc[-1] >= df['Upper Band'].iloc[-1]:
-            boll_signal = "VENTA"
-            boll_color = "red"
-    st.markdown(f'<div style="background-color:{boll_color};color:white;padding:10px;border-radius:5px;text-align:center;">{boll_signal}</div>', unsafe_allow_html=True)
+else:
+    st.warning("No se pudieron obtener datos de Alpha Vantage para este activo.")
